@@ -12,6 +12,10 @@ library(vegan)
 library(ggrepel)
 library(janitor)
 library(ssh)
+library(pheatmap)
+
+
+
 
 
 
@@ -20,6 +24,9 @@ library(ssh)
 
 ###Automating the file Transfer
 #################### THIS IS YOUR INPUT/OUTPUT SECTION #####################
+Raw_reads_location <- "../../media/scratch/john/shotgun_data"
+
+Worflows_output_folder_name <- "biobakery"
 
 biobake_input_folder <- "~/biobakery"
 
@@ -33,10 +40,13 @@ Valencia_output_file_destination <- "VIRGO_Valencia_Results_K_shotgun/Valencia"
 
 
 
+
 xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
 
 
 Day_labels=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
+
+Day_labels_verbose=c("K12D04" = "K12D-11", "K12D06" = "K12D-9", "K12D09" = "K12D-6", "K12D11" = "K12D-4", "K12D13" = "K12D-2", "K12D15" = "K12D0", "K18D47" = "K18D-10", "K18D49" = "K18D-8", "K18D51" = "K18D-6", "K18D53" = "K18D-4", "K18D55" = "K18D-2", "K18D57" = "K18D0", "K19D23" = "K19D-10", "K19D25" = "K19D-8", "K19D27" = "K19D-6", "K19D29" = "K19D-4", "K19D31" = "K19D-2", "K19D33" = "K19D0", "K20D75" = "K20D-10", "K20D77" = "K20D-8", "K20D79" = "K20D-6", "K20D81" = "K20D-4", "K20D83" = "K20D-2", "K20D85" = "K20D0")
 
 
 
@@ -52,10 +62,19 @@ biobake_tax_input_file <- paste(biobake_input_folder,"/metaphlan/merged/metaphla
 Metaphlan_to_VALENCIA_output <- paste( Metaphlan_analysis_output_folder, Metaphlan_analysis_outputfilename, sep = "")
 
 Metaphlan_CST_vis_input <- paste(Valencia_output_file_destination, "/", Valencia_output, sep = "")
+
+Human_heatmap_vis_input <- paste(biobake_input_folder, "/humann/merged/pathabundance_relab.tsv", sep ="")
                                       
                                       
 ################### Actual Code ##########################################
+
+ ###Biobakery Workflows Command ### You may want to run this step just in the terminal, but heres the generic code to run workflows 
+system(paste("biobakery_workflows wmgx --input", Raw_reads_location, "--output", Worflows_output_folder_name,  "--local-job 5 --threads 8  --bypass-strain-profiling"))
+
                                       
+
+
+################### Tax Abundance Bar plot #############
 
  ###use paste to save variables for file names
 
@@ -250,5 +269,89 @@ metadata_nmds %>%
   theme_classic()
 
 
+############### Vis Humann Pathway Analysis ##################
+
+
+path <- read.csv(Human_heatmap_vis_input, sep="\t") %>%
+  
+  #path <- read.csv("../Downloads/pathabundance.tsv", sep="\t")   %>%
+  rename(Pathway = X..Pathway) 
+
+path_short <- path %>% 
+  filter( !grepl('g__', Pathway)) %>% 
+  dplyr::select(-contains("QH"), 
+                -contains("community"),
+                -contains("R2_")) 
+  
+
+path_shot_test1 <- path_short %>%
+  mutate(data.frame(str_split_fixed(path_short$Pathway, ":", 2))) %>% 
+  rename(Pathway_Name = X2) %>% 
+  rename(Pathway_symbol = X1) %>% 
+  group_by(Pathway_Name) %>% 
+  mutate(path_relabund_sum = rowSums(across(where(is.numeric)))) 
+
+path_shorter <- path_shot_test1 %>%
+  #filter( !grepl('unclassified', Pathway_Name)) %>% 
+  column_to_rownames( var = "Pathway_Name") %>%
+  dplyr::select(-Pathway) %>%
+  arrange(desc(path_relabund_sum)) %>%
+  mutate(rank = row_number() ) %>%
+  filter(rank <= 30) %>%
+  dplyr::select (-path_relabund_sum, -rank, -Pathway_symbol)
+
+path_rotate <-  t(path_shorter) %>%
+  as.data.frame() %>%
+  rownames_to_column("sampleID") %>%  
+  mutate(labs = xlabels2)
+#%>%
+#pivot_longer( -sampleID, names_to = "Pathway", values_to = "Relative_Abundance")  
+
+
+path_rotate$sampleID <- gsub("_.*","", path_rotate$sampleID)
+
+rownames(path_rotate) <- path_rotate$sampleID
+
+path_rotate1 <- path_rotate %>% dplyr::select( -sampleID, -labs) 
+
+CST_meta <- metadata_nmds %>% as.data.frame() %>%
+  dplyr::select(sampleID, CST) %>%
+  arrange(sampleID) %>%
+  mutate(ID = Day_labels_verbose) %>% 
+  dplyr::select(-sampleID) %>% 
+  rename(CST = CST)
+
+rownames(CST_meta) <- CST_meta$ID
+CST_meta<- CST_meta %>% dplyr::select(-ID) 
+
+path_rotate1 <- t(path_rotate1) 
+
+colnames(path_rotate1) <- Day_labels_verbose
+
+#CST_meta <- t(CST_meta)
+
+paletteLength <- 50
+
+mycolor <- viridis::viridis(paletteLength)
+scale_rows = function(x){
+  m = apply(x, 1, mean, na.rm = T)
+  s = apply(x, 1, sd, na.rm = T)
+  return((x - m) / s)
+}
+
+
+zscores <- scale_rows(path_rotate1)
+
+pheatmap(mat = zscores,
+         color = mycolor, 
+         annotation_col = CST_meta, 
+         legend=T, 
+         # legend_labels = c("Z-Score"),
+         #cluster_cols = FALSE,
+         gaps_col = c(6,12,18)
+         
+         
+         
+) 
 
 
