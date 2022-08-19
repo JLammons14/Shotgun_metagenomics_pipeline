@@ -18,8 +18,8 @@ library(pheatmap)
 
 
 
-
-
+###Instructions: VIRGO and VALENCIA Folders should be your cluster profile home directory, if not we can route to it in the future
+                ### I run these programs while in a conda env on the cluster. 
 
 
 ###Automating the file Transfer
@@ -28,16 +28,28 @@ Raw_reads_location <- "../../media/scratch/john/shotgun_data"
 
 Worflows_output_folder_name <- "biobakery"
 
+username <- jlamm1
+
 biobake_input_folder <- "~/biobakery"
+
+
+Cluster_conda_env <- "VIRGO"
+
+
+Metaphlan_analysis_outputfilename <- "K_shotgun_metaphlan_fsingle.csv"
 
 Metaphlan_analysis_output_folder <- "~/VIRGO_Valencia_Results_K_shotgun/VIRGO_Valencia_Input/"
 
-Metaphlan_analysis_outputfilename <- "K_shotgun_metaphlan_fsingle.csv"
 
 Valencia_output <- "K_shotgun_metaphlan_CST_fsingle.csv"
 
 Valencia_output_file_destination <- "VIRGO_Valencia_Results_K_shotgun/Valencia"
 
+VIRGO_local_folder <- "~/VIRGO_Valencia_Results_K_shotgun/VIRGO_K_output"
+
+
+
+ 
 
 
 
@@ -64,7 +76,17 @@ Metaphlan_to_VALENCIA_output <- paste( Metaphlan_analysis_output_folder, Metaphl
 Metaphlan_CST_vis_input <- paste(Valencia_output_file_destination, "/", Valencia_output, sep = "")
 
 Human_heatmap_vis_input <- paste(biobake_input_folder, "/humann/merged/pathabundance_relab.tsv", sep ="")
-                                      
+
+Kneaddata_outputfiles <- paste(biobake_input_folder, "/kneaddata/main", sep="") 
+
+VIRGO_vis_input_total_abun <- paste(VIRGO_local_folder, "/temp_mapping/summary.Abundance.txt", sep = "")
+
+VIRGO_vis_input_Rel_abund <- paste(VIRGO_local_folder, "/temp_mapping/summary.Percentage.txt", sep = "")
+
+wd <- getwd()
+local_user <- system(" id -un", intern = TRUE)
+machine_name <- system("hostname", intern = TRUE)
+cluster_name <- "tigerfish"
                                       
 ################### Actual Code ##########################################
 
@@ -204,22 +226,21 @@ taxo_data_rotate_met2 <- taxo_data_rotate_met1 %>% rownames_to_column(var = "sam
 
 
 ### Executing Terminal Commands To Run VALENCIA
-session <- ssh_connect("jlamm1@tigerfish")
+session <- ssh_connect(paste(local_user, "@", cluster_name, sep = ""))
 write.csv(taxo_data_rotate_met2, Metaphlan_to_VALENCIA_output, row.names = FALSE)
-scp_upload(session, Metaphlan_to_VALENCIA_output )
-ssh_exec_wait(session, command = c( paste( 'cp', Metaphlan_analysis_outputfilename,  'VALENCIA'),
+scp_upload(session, Metaphlan_to_VALENCIA_output, to ="VALENCIA" )
+ssh_exec_wait(session, command = c( 
                                     'cd VALENCIA',
-                                    'conda activate VIRGO',
-                                    paste('srun python3 ./Valencia.py -ref CST_centroids_012920.csv -i', Metaphlan_analysis_outputfilename, '-o', Valencia_output),
-                                    paste('cp ', Valencia_output,  ' ../', sep="" )
+                                    paste('conda activate',  Cluster_conda_env),
+                                    paste('srun python3 ./Valencia.py -ref CST_centroids_012920.csv -i', Metaphlan_analysis_outputfilename, '-o', Valencia_output)
+                                  
                                     )
                                      )
 
         
                   
 
-scp_download(session, Valencia_output )
-system(paste('mv', Valencia_output, Valencia_output_file_destination ))
+scp_download(session, paste('VALENCIA/', Valencia_output, sep="" ), to = paste( Valencia_output_file_destination, sep = ""))
 ssh_disconnect(session)
 
 ################################################# CST Analysis ##################################
@@ -354,4 +375,141 @@ pheatmap(mat = zscores,
          
 ) 
 
+################################# Completed Biobakery Portion of Analysis ##################################
+################################# starting the VIRGO Section of Analysis ##################################
+#################################                                       ##################################
+
+### To Run the VIRGO portion of the analysis, I formerly utilized multiline editing 
+### in Atom to create the input file. I want to automate this step as well, but it will take a bit 
+## so for now I'll skip that step. 
+
+
+session <- ssh_connect(paste(local_user, "@", cluster_name, sep = ""))
+
+
+ssh_exec_wait(session, command = c( 
+              
+              'mkdir VIRGO/4_run_VIRGO/kneaddata_output'
+              ))
+
+### Moving cleaned files into a seperate directory so they can be transfered
+
+system(paste("mkdir ", biobake_input_folder, '/kneaddata/main/clean_forward_reads', sep=""))
+system(paste("mv ", biobake_input_folder, "/kneaddata/main/*R1_001.fastq ", biobake_input_folder, '/kneaddata/main/clean_forward_reads' , sep=""))
+scp_upload(session, paste(Kneaddata_outputfiles,"/clean_forward_reads", sep = ""), to = "VIRGO/4_run_VIRGO/kneaddata_output")
+
+
+###Cleaning up garbaged directory I made
+
+system(paste("mv ", biobake_input_folder, "/kneaddata/main/clean_forward_reads/*R1_001.fastq ", biobake_input_folder, '/kneaddata/main' , sep=""))
+
+system(paste("rm -r ", biobake_input_folder, '/kneaddata/main/clean_forward_reads' , sep="" ))
+#ssh_exec_wait(session, 
+
+##Moving into VIRGO to RUN the program
+#"sbatch ./runMapping.step1.sh -r ../shotgun_cleaned_files/K12D13_S29_L003_R1_001_kneaddata_paired_1.fastq -p K12D13  -d /mnt/beegfs/home/jlamm1/VIRGO")
+ssh_exec_wait(session, command = c( "cd VIRGO/4_run_VIRGO/",
+                          "ls kneaddata_output/clean_forward_reads > kneaddata_output_files.txt",
+                           paste('conda activate', Cluster_conda_env),
+                          "for file in $(cat kneaddata_output_files.txt); do echo  sbatch ./runMapping.step1.sh -r kneaddata_output/clean_forward_reads/$file -p ${file::5}  -d ~/VIRGO ;  done"),
+                          paste("scp -r temp_mapping ", local_user, "@", machine_name, ":",VIRGO_output, sep = "") )           
+
+ 
+
+
+### This is to prevent movement of files before they finish running
+
+ while(
+   ssh_exec_wait(session, command = c(" num=$(wc -l < VIRGO/4_run_VIRGO/kneaddata_output_files.txt)", 
+                                        "num_mult=$(($num * 5))",
+                                          'echo  "$num_mult"') ) == 
+   ssh_exec_wait(session, command = "ls -lq VIRGO/4_run_VIRGO/temp_mapping  | wc -l"  )) {
+   Sys.sleep(600)}
+   
+
+scp_download(session, "VIRGO/4_run_VIRGO/temp_mapping",  to = VIRGO_local_folder)
+ssh_disconnect(session)
+
+
+                
+############################# WE did it! VIRGO complete!!!!!!!!!! Now plot abundance ######################
+
+ ###### VIRGO Analysis Absolute Abundance barplot
+
+VIRGO_taxo <- read.delim(VIRGO_vis_input_total_abun)
+
+VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D4"] <-  "K12D04"
+VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D6"] <-  "K12D06"
+VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D9"] <-  "K12D09"
+VIRGO_taxo <- VIRGO_taxo[c(3,4,5,1,2,6:nrow(VIRGO_taxo)), ]
+
+
+VIRGO_taxo$Sample <- VIRGO_taxo$PC
+VIRGO_taxo$Patient <- str_sub(VIRGO_taxo$Sample, 1, 3)
+
+VIRGO_taxo$Sample <- gsub("\\_.*", "", VIRGO_taxo$Sample)
+names <- str(VIRGO_taxo[1,])
+VIRGO_taxo_longer <- VIRGO_taxo %>%
+  pivot_longer(-c(PC,Sample,Patient), names_to = "Taxonomy", values_to = "Abundance") 
+
+VIRGO_Combo <- VIRGO_taxo_longer %>% 
+  group_by(Taxonomy) %>%
+  summarize( tax_abun = sum(as.numeric(Abundance), .drop=FALSE)) %>%
+  arrange(desc(tax_abun)) %>% 
+  mutate(rank = row_number()) %>% 
+  inner_join(VIRGO_taxo_longer) %>%
+  mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy ))# %>%
+
+
+VIRGO_xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
+
+
+ggplot(VIRGO_Combo, aes(x =Sample, y =Abundance, fill=Taxonomy,  color=I("black")  )) +
+  geom_col() +
+  theme_classic() + facet_grid(~Patient, scales = "free") +
+  scale_y_continuous(expand = c(0,0))+
+  theme(legend.text = element_text(face = "italic"))+
+  labs(x = "Days Prior to iBV", y = "Relative Abundance") +
+  scale_x_discrete(labels=VIRGO_xlabels2)
+
+###################################################### VIRGO Bar Plot Rel Abund ##########
+
+
+VIRGO_taxo_rel <- read.delim(VIRGO_vis_input_Rel_abund)
+
+VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC == "K12D4"] <-  "K12D04"
+VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC == "K12D6"] <-  "K12D06"
+VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC== "K12D9"] <-  "K12D09"
+VIRGO_taxo_rel <- VIRGO_taxo_rel[c(3,4,5,1,2,6:nrow(VIRGO_taxo_rel)), ]
+
+
+VIRGO_taxo_rel$Sample <- VIRGO_taxo_rel$PC
+VIRGO_taxo_rel$Patient <- str_sub(VIRGO_taxo_rel$Sample, 1, 3)
+
+VIRGO_taxo_rel$Sample <- gsub("\\_.*", "", VIRGO_taxo_rel$Sample)
+names <- str(VIRGO_taxo_rel[1,])
+VIRGO_taxo_longer_rel <- VIRGO_taxo_rel %>%
+  pivot_longer(-c(PC,Sample,Patient), names_to = "Taxonomy", values_to = "Relative_Abundance") 
+
+VIRGO_Combo_rel <- VIRGO_taxo_longer_rel %>% 
+  group_by(Taxonomy) %>%
+  summarize( tax_abun_rel = sum(as.numeric(Relative_Abundance), .drop=FALSE)) %>%
+  arrange(desc(tax_abun_rel)) %>% 
+  mutate(rank = row_number()) %>% 
+  inner_join(VIRGO_taxo_longer_rel) %>%
+  mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy ))# %>%
+
+
+VIRGO_xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
+
+
+ggplot(VIRGO_Combo_rel, aes(x =Sample, y =Relative_Abundance, fill=Taxonomy,  color=I("black")  )) +
+  geom_col() +
+  theme_classic() + facet_grid(~Patient, scales = "free") +
+  scale_y_continuous(expand = c(0,0))+
+  labs(x = "Days Prior to iBV", y = "Relative Abundance") +
+  theme(legend.text = element_text(face = "italic"))+
+  scale_x_discrete(labels=VIRGO_xlabels2)
+
+################################## TIME FOR VIRGO TO valencia ################################
 
