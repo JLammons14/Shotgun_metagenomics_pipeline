@@ -1,4 +1,4 @@
-
+library(tidyverse)
 library(tidyr)
 library(dplyr)
 library(tidyverse)
@@ -13,8 +13,13 @@ library(ggrepel)
 library(janitor)
 library(ssh)
 library(pheatmap)
-
-
+library(viridis)
+library(circlize)
+library(ComplexHeatmap)
+library(hrbrthemes)
+library(fs)
+library(data.table)
+library(Rpython)
 
 
 
@@ -24,6 +29,10 @@ library(pheatmap)
 
 ###Automating the file Transfer
 #################### THIS IS YOUR INPUT/OUTPUT SECTION #####################
+
+Project_name <- "K_shotgun_"
+output_folder <- "~/VIRGO_Valencia_Results_K_shotgun"
+
 Raw_reads_location <- "../../media/scratch/john/shotgun_data"
 
 Worflows_output_folder_name <- "biobakery"
@@ -36,17 +45,25 @@ biobake_input_folder <- "~/biobakery"
 Cluster_conda_env <- "VIRGO"
 
 
-Metaphlan_analysis_outputfilename <- "K_shotgun_metaphlan_fsingle.csv"
+Metaphlan_analysis_outputfilename <- paste(Project_name,"metaphlan_fsingle.csv", sep="")
 
-Metaphlan_analysis_output_folder <- "~/VIRGO_Valencia_Results_K_shotgun/VIRGO_Valencia_Input/"
+Metaphlan_analysis_output_folder <- paste(output_folder, "/VIRGO_Valencia_Input/", sep="")
 
 
-Valencia_output <- "K_shotgun_metaphlan_CST_fsingle.csv"
+Valencia_output <- paste(Project_name,"metaphlan_CST_fsingle.csv", sep="")
 
-Valencia_output_file_destination <- "VIRGO_Valencia_Results_K_shotgun/Valencia"
+Valencia_output_file_destination <- paste(output_folder, "/Valencia", sep="")
 
-VIRGO_local_folder <- "~/VIRGO_Valencia_Results_K_shotgun/VIRGO_K_output"
 
+
+
+VIRGO_local_folder <- paste(output_folder,"/VIRGO_K_output", sep="")
+
+
+
+VIRGO_to_Valencia_folder <- paste(output_folder,"/VIRGO_Valencia_Input/", sep="")
+
+Valencia_analysis_of_VIRGO_tax <-paste(Project_name,"VIRGO_CST_fsingle", sep="")
 
 
  
@@ -83,6 +100,12 @@ VIRGO_vis_input_total_abun <- paste(VIRGO_local_folder, "/temp_mapping/summary.A
 
 VIRGO_vis_input_Rel_abund <- paste(VIRGO_local_folder, "/temp_mapping/summary.Percentage.txt", sep = "")
 
+
+VIRGO_to_valencia_file <- paste(Project_name, "VIRGO_to_Valencia.csv", sep = "")
+
+VIRGO_local_folder_for_path_analysis <- paste(VIRGO_local_folder, "/temp_mapping", sep="")
+
+
 wd <- getwd()
 local_user <- system(" id -un", intern = TRUE)
 machine_name <- system("hostname", intern = TRUE)
@@ -91,7 +114,7 @@ cluster_name <- "tigerfish"
 ################### Actual Code ##########################################
 
  ###Biobakery Workflows Command ### You may want to run this step just in the terminal, but heres the generic code to run workflows 
-system(paste("biobakery_workflows wmgx --input", Raw_reads_location, "--output", Worflows_output_folder_name,  "--local-job 5 --threads 8  --bypass-strain-profiling"))
+#system(paste("biobakery_workflows wmgx --input", Raw_reads_location, "--output", Worflows_output_folder_name,  "--local-job 5 --threads 8  --bypass-strain-profiling"))
 
                                       
 
@@ -261,6 +284,8 @@ Day_labels <- Day_labels %>% as.data.frame() %>% rownames_to_column(var = "sampl
 
 ######### Creating Dist Matrix########
 
+
+
 CST_mat <- taxo_data_rotate %>% dplyr::select(-sampleID)
 
 CST_mat <- sapply(CST_mat, as.numeric)
@@ -405,51 +430,82 @@ system(paste("mv ", biobake_input_folder, "/kneaddata/main/clean_forward_reads/*
 
 system(paste("rm -r ", biobake_input_folder, '/kneaddata/main/clean_forward_reads' , sep="" ))
 #ssh_exec_wait(session, 
-
+ssh_exec_wait(session, command = c("rm -r VIRGO/4_run_VIRGO/temp_mapping"))
 ##Moving into VIRGO to RUN the program
 #"sbatch ./runMapping.step1.sh -r ../shotgun_cleaned_files/K12D13_S29_L003_R1_001_kneaddata_paired_1.fastq -p K12D13  -d /mnt/beegfs/home/jlamm1/VIRGO")
 ssh_exec_wait(session, command = c( "cd VIRGO/4_run_VIRGO/",
                           "ls kneaddata_output/clean_forward_reads > kneaddata_output_files.txt",
                            paste('conda activate', Cluster_conda_env),
-                          "for file in $(cat kneaddata_output_files.txt); do echo  sbatch ./runMapping.step1.sh -r kneaddata_output/clean_forward_reads/$file -p ${file::5}  -d ~/VIRGO ;  done"),
-                          paste("scp -r temp_mapping ", local_user, "@", machine_name, ":",VIRGO_output, sep = "") )           
+                          "for file in $(cat kneaddata_output_files.txt); do sbatch ./runMapping.step1.sh -r kneaddata_output/clean_forward_reads/$file -p ${file::6}  -d ~/VIRGO ;  done"
+))          
 
  
+
+###paste("scp -r temp_mapping ", local_user, "@", machine_name, ":",VIRGO_output, sep = "")
 
 
 ### This is to prevent movement of files before they finish running
 
- while(
-   ssh_exec_wait(session, command = c(" num=$(wc -l < VIRGO/4_run_VIRGO/kneaddata_output_files.txt)", 
-                                        "num_mult=$(($num * 5))",
-                                          'echo  "$num_mult"') ) == 
-   ssh_exec_wait(session, command = "ls -lq VIRGO/4_run_VIRGO/temp_mapping  | wc -l"  )) {
-   Sys.sleep(600)}
-   
+file_num <- 0
+file_num_tot <- 1
 
-scp_download(session, "VIRGO/4_run_VIRGO/temp_mapping",  to = VIRGO_local_folder)
+while(file_num[1] != file_num_tot[1] ) {
+   file_num <- capture.output(ssh_exec_wait(session, command = c(" num=$(wc -l < VIRGO/4_run_VIRGO/kneaddata_output_files.txt)", 
+                                        "num_mult=$((($num)))",
+                                          'echo  "$num_mult"') )) 
+   file_num_tot <- capture.output( ssh_exec_wait(session, command = "ls -lq VIRGO/4_run_VIRGO/temp_mapping  | wc -l"  )) 
+   Sys.sleep(300)}   
+
+
+
+ssh_exec_wait(session, command = c( "cd VIRGO/4_run_VIRGO/",
+                                    paste('conda activate', Cluster_conda_env),
+                                    "sbatch ./runMapping.step2.sh -p temp_mapping -d ~/VIRGO"))
+
+
+while( file_num[1] != file_num_tot[1]) {
+  file_num <- capture.output(ssh_exec_wait(session, command = c(" num=$(wc -l < VIRGO/4_run_VIRGO/kneaddata_output_files.txt)", 
+                                     "num_mult=$((($num * 11)+6))",
+                                     'echo  "$num_mult"') ) )
+  
+  file_num_tot <- capture.output(ssh_exec_wait(session, command = "ls -lq VIRGO/4_run_VIRGO/temp_mapping  | wc -l"  ))
+  Sys.sleep(300)
+  }   
+
+
+
+
+  scp_download(session, "VIRGO/4_run_VIRGO/temp_mapping",  to = VIRGO_local_folder)
+  ssh_exec_wait(session, command = "rm -r VIRGO/4_run_VIRGO/temp_mapping")
 ssh_disconnect(session)
+
 
 
                 
 ############################# WE did it! VIRGO complete!!!!!!!!!! Now plot abundance ######################
 
- ###### VIRGO Analysis Absolute Abundance barplot
+ ###### VIRGO Analysis Absolute Abundance barplot 
 
-VIRGO_taxo <- read.delim(VIRGO_vis_input_total_abun)
+### Parts fo this were the first  code I wrote for the project, I came back and 
+## cleaned some of it to make certain improvements,so the differences are suddle, but 
+## see if you can notice the improvements I've made. 
+
+VIRGO_taxo <- read.delim(VIRGO_vis_input_total_abun) 
 
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D4"] <-  "K12D04"
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D6"] <-  "K12D06"
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D9"] <-  "K12D09"
 VIRGO_taxo <- VIRGO_taxo[c(3,4,5,1,2,6:nrow(VIRGO_taxo)), ]
 
+VIRGO_taxo$PC <- gsub("\\_.*", "", VIRGO_taxo$PC)
 
-VIRGO_taxo$Sample <- VIRGO_taxo$PC
-VIRGO_taxo$Patient <- str_sub(VIRGO_taxo$Sample, 1, 3)
+VIRGO_taxo1 <- VIRGO_taxo
 
-VIRGO_taxo$Sample <- gsub("\\_.*", "", VIRGO_taxo$Sample)
-names <- str(VIRGO_taxo[1,])
-VIRGO_taxo_longer <- VIRGO_taxo %>%
+VIRGO_taxo1$Sample <- VIRGO_taxo1$PC
+VIRGO_taxo1$Patient <- str_sub(VIRGO_taxo1$Sample, 1, 3)
+
+names <- str(VIRGO_taxo1[1,])
+VIRGO_taxo_longer <- VIRGO_taxo1 %>%
   pivot_longer(-c(PC,Sample,Patient), names_to = "Taxonomy", values_to = "Abundance") 
 
 VIRGO_Combo <- VIRGO_taxo_longer %>% 
@@ -500,7 +556,6 @@ VIRGO_Combo_rel <- VIRGO_taxo_longer_rel %>%
   mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy ))# %>%
 
 
-VIRGO_xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
 
 
 ggplot(VIRGO_Combo_rel, aes(x =Sample, y =Relative_Abundance, fill=Taxonomy,  color=I("black")  )) +
@@ -512,4 +567,281 @@ ggplot(VIRGO_Combo_rel, aes(x =Sample, y =Relative_Abundance, fill=Taxonomy,  co
   scale_x_discrete(labels=VIRGO_xlabels2)
 
 ################################## TIME FOR VIRGO TO valencia ################################
+
+
+###Table Prep
+VIRGO_table_for_valencia <- VIRGO_taxo %>% 
+mutate(read_count = rowSums(across(where(is.numeric)))) %>% 
+rename(sampleID = PC) %>% 
+dplyr::select(sampleID, read_count, everything(), )
+write.csv(VIRGO_table_for_valencia, row.names = FALSE)
+
+
+session <- ssh_connect(paste(local_user, "@", cluster_name, sep = ""))
+write.csv(VIRGO_table_for_valencia, VIRGO_to_valencia_file, row.names = FALSE)
+scp_upload(session, VIRGO_to_valencia_file, to ="VALENCIA" )
+ssh_exec_wait(session, command = c( 
+  'cd VALENCIA',
+  paste('conda activate',  Cluster_conda_env),
+  paste('srun python3 ./Valencia.py -ref CST_centroids_012920.csv -i', VIRGO_to_valencia_file, '-o', Valencia_analysis_of_VIRGO_tax)
+  
+)
+)
+
+
+
+
+scp_download(session, paste('VALENCIA/', Valencia_analysis_of_VIRGO_tax, ".csv" , sep="" ), to = paste( Valencia_output_file_destination, sep = ""))
+ssh_disconnect(session)
+
+
+#############################ORD PLOT!! ###################################################
+
+
+
+VIRGO_CST <- read.csv(paste(Valencia_output_file_destination,"/", Valencia_analysis_of_VIRGO_tax, ".csv", sep ="")) %>% 
+  dplyr::select(sampleID, score, CST)
+
+
+
+##creating metadata frame
+VIRGO_taxo <- VIRGO_taxo %>% rename( sampleID = PC)
+
+
+VIRGO_CST_meta <- VIRGO_taxo %>% 
+  inner_join(VIRGO_CST, by = "sampleID") %>% 
+  mutate(Patient = str_sub(sampleID, 1,3))
+
+rownames(VIRGO_taxo) <- VIRGO_taxo$sampleID
+
+
+
+
+VIRGO_xlabels2 <- xlabels2 %>% as.data.frame() %>% rownames_to_column(var = "sampleID") %>% rename(Day = ".")
+VIRGO_xlabels3 <- xlabels3 %>% as.data.frame() %>% rownames_to_column(var = "sampleID") %>% rename(Day = ".")
+
+
+##############make dist matrix
+
+VIRGO_CST_mat <- VIRGO_taxo %>% dplyr::select(-sampleID)
+
+VIRGO_CST_mat <- sapply(VIRGO_CST_mat, as.numeric)
+
+VIRGO_CST_mat <- as.matrix(VIRGO_CST_mat)
+
+set.seed(1)
+VIRGO_dist <- avgdist(VIRGO_CST_mat, dmethod = "bray", sample=2000, iterations = 200)
+VIRGO_nmds <- metaMDS(VIRGO_dist)
+
+goodness(VIRGO_nmds)
+stressplot(VIRGO_nmds)
+
+VIRGO_nmds_df <- scores(VIRGO_nmds, display="site") %>%
+  as_tibble(rownames = "sampleID") 
+
+VIRGO_nmds_df$sampleID <- VIRGO_CST_meta$sampleID
+
+
+VIRGO_metadata_nmds <- inner_join(VIRGO_nmds_df, VIRGO_CST_meta, by= "sampleID") %>%
+  left_join(VIRGO_xlabels2, by = "sampleID") 
+
+
+
+
+
+
+VIRGO_metadata_nmds %>%
+  ggplot(aes(x=NMDS1, y=NMDS2, color=Patient, label = Day ))+
+  geom_label_repel()+
+  geom_point( aes(shape =CST, size = score))+
+  scale_shape_manual(values=c(6,16,18,17))+
+  
+  theme_classic()
+
+####################################################LETS GO HEATMAP###############################
+############################################################################################
+#########################################################################################
+
+setwd(paste(VIRGO_local_folder_for_path_analysis))
+
+filenames_genelst <- list.files( pattern="*gene.lst.txt") 
+
+
+VIRGO_gene_list = lapply(filenames_genelst, function(i){
+  x=read_delim(i)
+  x$sampleID = str_extract(i, "[^.]+")
+  x
+  
+})
+
+##### Loading in KEGG Gene ID's Basically
+
+filenames_kegg.module.annotation <- list.files( pattern="*kegg.module.annotation.txt") 
+
+
+VIRGO_kegg.module.annotation = lapply(filenames_kegg.module.annotation, function(i){
+  x=read_delim(i)
+  x$file = str_extract(i, "[^.]+")
+  x
+  
+})
+
+######## Loading in KEGG Pathway info 
+
+filenames_kegg.pathway.annotation.txt <- list.files( pattern="*kegg.pathway.annotation.txt") 
+
+
+VIRGO_kegg.pathway.annotation.txt = lapply(filenames_kegg.pathway.annotation.txt, function(i){
+  x=read_delim(i)
+  x$file = i
+  x
+  
+})
+
+
+##### Loading in Files for Protein Family info 
+
+
+filenames_protein.family.annotation <- list.files( pattern="*proteinFamily.annotation.txt") 
+
+
+VIRGO_protein.family.annotation = lapply(filenames_protein.family.annotation, function(i){
+  x=read_delim(i)
+  x$file = str_extract(i, "[^.]+")
+  x
+  
+})
+
+VIRGO_kegg.pathway.annotation.txt = do.call("rbind.data.frame", VIRGO_kegg.pathway.annotation.txt)
+
+VIRGO_kegg.module.annotation = do.call("rbind.data.frame", VIRGO_kegg.module.annotation)
+
+VIRGO_protein.family.annotation = do.call("rbind.data.frame", VIRGO_protein.family.annotation)
+
+
+
+
+VIRGO_gene_info = do.call("rbind.data.frame", VIRGO_gene_list) %>%
+  rename(Gene = gene)%>%
+  filter(count > 200)  %>%
+  left_join(  VIRGO_kegg.module.annotation, by = "Gene") %>%
+  left_join( VIRGO_kegg.pathway.annotation.txt, by = "Gene") %>%
+  left_join(VIRGO_protein.family.annotation, by = "Gene") %>% 
+  filter(KEGG_module_number != "NA") 
+
+
+VIRGO_kegg.pathway.annotation.txt = do.call("rbind.data.frame", VIRGO_kegg.pathway.annotation.txt)
+
+VIRGO_kegg.module.annotation = do.call("rbind.data.frame", VIRGO_kegg.module.annotation)
+
+VIRGO_protein.family.annotation = do.call("rbind.data.frame", VIRGO_protein.family.annotation)
+
+
+
+
+VIRGO_gene_info = do.call("rbind.data.frame", VIRGO_gene_list) %>%
+  rename(Gene = gene)%>%
+  filter(count > 200)  %>%
+  left_join(  VIRGO_kegg.module.annotation, by = "Gene") %>%
+  left_join( VIRGO_kegg.pathway.annotation.txt, by = "Gene") %>%
+  left_join(VIRGO_protein.family.annotation, by = "Gene") %>% 
+  filter(KEGG_module_number != "NA") 
+#filter(KEGG_module_number != "NA" |KEGG_pathwayID != "NA" ) %>%
+
+
+
+
+
+VIRGO_gene_info$Patient <-  str_sub(VIRGO_gene_info$sampleID, 1, 3) 
+
+
+
+VIRGO_gene_info <- VIRGO_gene_info %>% 
+  dplyr::select(-file.x, -file.y, -file) %>%
+  distinct() %>% 
+  group_by(sampleID, KEGG_module_number) %>%
+  filter(count > 100) %>% 
+  mutate(pathway_count = sum(count)) %>%
+  
+  ungroup() %>% 
+  group_by(sampleID) %>% 
+  mutate(relabund = count/(sum(count))) %>%
+  ungroup() 
+
+VIRGO_gene_info$GO <-  str_sub(VIRGO_gene_info$GO, 3, -1)
+
+VIRGO_sub <-  VIRGO_gene_info %>% 
+  
+  group_by(KEGG_module_number) %>% 
+  mutate( total_path_count = sum(count)) %>% 
+  ungroup() %>%  
+  group_by(sampleID) %>% 
+  summarise(rel_total_path_count = (total_path_count/(sum(count))), KEGG_module_number = KEGG_module_number, Gene = Gene) %>% 
+  arrange(desc(rel_total_path_count)) %>% 
+  mutate(rank = row_number()) %>%
+  ungroup() %>% 
+  inner_join(VIRGO_gene_info, by = c("sampleID" = "sampleID", "Gene" = "Gene")) %>%
+  #filter(rank <= 30) %>% 
+  dplyr::select(Gene, count, rank, sampleID, KEGG_module_number.x,Annotation.x, GO, rel_total_path_count, count, KEGG_pathwayID, Annotation.y, relabund, Patient) %>% 
+  group_by(sampleID, KEGG_module_number.x) %>% 
+  mutate(sample_path_count= sum(count)) %>% 
+  ungroup() %>% 
+  group_by(sampleID) %>% 
+  mutate(subject_sum_count = sum(count)) %>% 
+  mutate(rel_sample_path_count = (sample_path_count/sum(count))) %>% 
+  filter(rank < 30)
+
+VIRGO_sub$GO <- str_split_fixed(VIRGO_sub$GO, ";", 2)[, 1]
+VIRGO_sub$Subject <-  str_sub(VIRGO_sub$sampleID, 1, 3) 
+
+
+#group_by(sampleID) %>%
+#summarize(mean_rel_abund = 100*mean(relabund), .groups='drop' ) %>%
+#ungroup() %>%
+
+
+
+VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D4"] <-  "K12D04"
+VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D6"] <-  "K12D06"
+VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D9"] <-  "K12D09"
+
+
+##For the Most part the Master Doc is cleaned Now we will subset for pathway annotation
+
+
+#   
+
+test <- VIRGO_sub %>%  dplyr::select( sampleID, rel_sample_path_count, Annotation.x)  %>%  distinct() %>% 
+  group_by(Annotation.x) %>% 
+  pivot_wider(names_from = sampleID, values_from = rel_sample_path_count) %>% 
+  column_to_rownames(var ="Annotation.x")  
+
+test[is.na(test)] <- 0
+
+test_rotate <- t(test) 
+
+test_rotate1 <- rownames_to_column(as.data.frame(test_rotate), var ="sampleID")
+
+
+test_rotate1$Subject <-  str_sub(test_rotate1$sampleID, 1, 3) 
+
+
+test <- as.matrix(test)
+mycolor <- viridis::viridis(paletteLength)
+
+
+Heatmap(test, name = "test",
+        scale = "row", 
+        labRow  = VIRGO_xlabels3,
+        col = mycolor,
+        #split = test_rotate1$Subject
+)
+
+ggplot(VIRGO_sub, aes(x=sampleID, y=Annotation.x, fill=rel_sample_path_count))+
+  geom_tile() +
+  facet_grid(~Subject, scales = "free")+
+  theme_classic()+
+  labs(x = "Days Prior to iBV") +
+  scale_x_discrete(labels=xlabels2) +
+  scale_fill_viridis(discrete=FALSE)
 
