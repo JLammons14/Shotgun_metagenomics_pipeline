@@ -12,7 +12,6 @@ library(vegan)
 library(ggrepel)
 library(janitor)
 library(ssh)
-library(pheatmap)
 library(viridis)
 library(circlize)
 library(ComplexHeatmap)
@@ -20,6 +19,10 @@ library(hrbrthemes)
 library(fs)
 library(data.table)
 library(Rpython)
+library(jcolors)
+library(ggnewscale)
+
+
 
 
 
@@ -35,22 +38,22 @@ output_folder <- "~/VIRGO_Valencia_Results_K_shotgun"
 
 Raw_reads_location <- "../../media/scratch/john/shotgun_data"
 
-Worflows_output_folder_name <- "biobakery"
+Worflows_output_folder_name <- "biobakery_2"
 
 username <- jlamm1
 
-biobake_input_folder <- "~/biobakery"
-
+biobake_input_folder <- "~/biobakery_2"
+Nugent_meta_data <- read.csv("~/Documents/Kshotgun_nuget_metadata.csv",sep = "\t", header = TRUE)
 
 Cluster_conda_env <- "VIRGO"
+#####################################Less important Inputs 
 
-
-Metaphlan_analysis_outputfilename <- paste(Project_name,"metaphlan_fsingle.csv", sep="")
+Metaphlan_analysis_outputfilename <- paste(Project_name,"metaphlan.csv", sep="")
 
 Metaphlan_analysis_output_folder <- paste(output_folder, "/VIRGO_Valencia_Input/", sep="")
 
 
-Valencia_output <- paste(Project_name,"metaphlan_CST_fsingle.csv", sep="")
+Valencia_output <- paste(Project_name,"metaphlan_CST.csv", sep="")
 
 Valencia_output_file_destination <- paste(output_folder, "/Valencia", sep="")
 
@@ -63,12 +66,13 @@ VIRGO_local_folder <- paste(output_folder,"/VIRGO_K_output", sep="")
 
 VIRGO_to_Valencia_folder <- paste(output_folder,"/VIRGO_Valencia_Input/", sep="")
 
-Valencia_analysis_of_VIRGO_tax <-paste(Project_name,"VIRGO_CST_fsingle", sep="")
+Valencia_analysis_of_VIRGO_tax <-paste(Project_name,"VIRGO_CST", sep="")
 
 
  
 
 
+xlabels3=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
 
 xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
 
@@ -135,6 +139,7 @@ taxo_data <- read.csv( biobake_tax_input_file, sep="\t", stringsAsFactors=FALSE)
 taxo_data <- filter(taxo_data, grepl('s__', taxonomy)) 
 
 taxo_data$taxonomy <- gsub(".*s__","",taxo_data$taxonomy) 
+
 taxo_data_rotate <- t(taxo_data)
 taxo_data_rotate <- as.data.frame(taxo_data_rotate) %>%
   rownames_to_column(var = "sampleID") %>%
@@ -159,7 +164,8 @@ taxo_data_rotate$sampleID[taxo_data_rotate$sampleID == "K12D4_"] <-  "K12D04"
 taxo_data_rotate$sampleID[taxo_data_rotate$sampleID == "K12D6_"] <-  "K12D06"
 taxo_data_rotate$sampleID[taxo_data_rotate$sampleID == "K12D9_"] <-  "K12D09"
 
-taxo_data_rotate <- taxo_data_rotate[c(3,4,5,1,2,6:nrow(taxo_data_rotate)), ]
+
+taxo_data_rotate <- taxo_data_rotate[c(4,5,6,1,2,3,7:nrow(taxo_data_rotate)), ]
 
 #taxo_data_rotate$read_count <- rowSums(taxo_data_rotate[ ,2:90], na.rm = TRUE)
 rownames(taxo_data_rotate) <-  taxo_data_rotate$sampleID
@@ -169,11 +175,16 @@ rownames(taxo_data_rotate) <-  taxo_data_rotate$sampleID
 
 #### Tidy Data, calculating Relative Abundance, and Subsetting Taxa by Abundance Rank
 
-taxo_data_rotate1 <- taxo_data_rotate %>%
+taxo_data_rotate1 <- taxo_data_rotate %>% 
   pivot_longer(cols = !sampleID, names_to = "Taxonomy", values_to = "Relative_Abundance") %>%
-  mutate( Patient = str_sub( sampleID, 1,3 ))
+  mutate( Patient = str_sub( sampleID, 1,3 )) %>% 
+  mutate(Taxonomy = replace(Taxonomy, Taxonomy == "Atopobium_vaginae", "Fannyhessea_vaginae")) %>% 
+  mutate(category = "2")
+
+taxo_data_rotate$sampleID[taxo_data_rotate$sampleID == "K12D4_"] <-  "K12D04"
 #group_by(sampleID) %>% 
 #mutate(sample_sum = sum(as.numeric(Relative_Abundance)))
+
 
 taxo_data_rotate2 <- taxo_data_rotate1 %>% 
   
@@ -184,11 +195,18 @@ taxo_data_rotate2 <- taxo_data_rotate1 %>%
   inner_join(taxo_data_rotate1) %>% 
   
   
-  mutate(Taxonomy = if_else(rank > 10, "Other", Taxonomy )) %>%
+  mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy )) %>%
   group_by(sampleID) %>% 
+
   
   mutate(sample_sum = sum(as.numeric(Relative_Abundance))) %>%
-  ungroup() 
+  ungroup() %>% 
+  mutate(Taxonomy = fct_reorder(Taxonomy, rank, .desc = TRUE)) %>% 
+  filter(sampleID !="K12D11")
+
+
+taxo_data_rotate2_adjusted <- taxo_data_rotate2 %>% 
+  mutate(Relative_Abundance = as.numeric(Relative_Abundance)/100)
 
 
 ###Color Stuff, dont think this is working yet 
@@ -207,28 +225,93 @@ cols[levels(taxo_data_rotate2$Taxonomy)=="Other"]="grey"
 
 
 ################ Tax Abundance Bar Plot
+stack_barplot <- function(tax_df, sampleID1, values1, tax_names, facet_var, sample_labels, ylab) {
 
-ggplot(taxo_data_rotate2, aes(x = sampleID, y = as.numeric(Relative_Abundance), fill = Taxonomy, color=I("black"))) +
+p <- ggplot(tax_df, aes(x = sampleID1, y = as.numeric(values1), fill = tax_names, color=I("black"))) +
   geom_col() +
-  theme_classic() + facet_grid(~Patient, scales = "free") +
-  labs(x = "Days Prior to iBV", y = "Relative Abundance") +
-  scale_x_discrete(labels=xlabels2)+
+  theme_classic() + facet_grid(facet_var, scales = "free") +
+  labs(x = "Days Prior to iBV", y = ylab) +
+  scale_x_discrete(labels=sample_labels)+
   theme(legend.text = element_text(face = "italic"))+
-  scale_y_continuous(expand=c(0,0), limits=c(0,100.05))
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_discrete(name = "Taxonomy")
+  return(p)
+}
+
+stack_barplot(taxo_data_rotate2, taxo_data_rotate2$sampleID, taxo_data_rotate2$Relative_Abundance, taxo_data_rotate2$Taxonomy, ~Patient, xlabels2, "Relative Abundance")
 
 
 
 
 ################# Tax Heatmap
+Tax_heatmap <- function(tax_df, sampleID, Tax, values, groups1, sample_labels) {
 
-ggplot(taxo_data_rotate1, aes(x = sampleID, y = Taxonomy) )+
-  geom_raster(aes(fill = as.numeric(Relative_Abundance))) +
-  theme_classic() + facet_grid(~Patient, scales = "free") +
+ggplot(tax_df, aes(x = sampleID, y = Tax) )+
+  geom_raster(aes(fill = log10(as.numeric(values)+0))) +
+  theme_classic() + facet_grid(groups1, scales = "free") +
   theme(axis.text.y.left = element_text(face = "italic"))+
-  scale_fill_gradient(name = NULL) +
-  scale_x_discrete(labels=xlabels2) 
+   # scale_fill_gradient(breaks = c(-7.5, -6, -4, -2, -1), labels = c("0",".0001", ".01", "1", "10"), na.value="black", low = "darkblue", high = "lightblue", name = "Bacteria abundance (%)", guide = guide_colourbar(direction = "horizontal", order = 2, title.position = "top")) +
+  scale_x_discrete(labels=sample_labels) +
+    labs(x = "Days Prior to iBV", y = "Taxonomy")
+  
+}
+
+Tax_heatmap(taxo_data_rotate1, sampleID, factor(taxo_data_rotate1$Taxonomy), taxo_data_rotate1$Relative_Abundance, ~Patient, xlabels2)
+ Tax_heatmap(taxo_data_rotate2_adjusted, sampleID, factor(taxo_data_rotate2_adjusted$Taxonomy), taxo_data_rotate2_adjusted$Relative_Abundance, ~Patient, xlabels2)
 
 
+
+################## Custom Heatmap for addining in Nuget Scores ################################
+
+
+Nugent_meta_data <- Nugent_meta_data %>% mutate(Patient = str_sub(sampleID, 1,3)) %>% 
+  filter(sampleID != "K12D11")
+ 
+ biobake_tax_heatmap <- taxo_data_rotate2_adjusted  %>% group_by(Taxonomy, sampleID) %>% 
+   mutate(rel_abund_heatmap = sum(as.numeric(Relative_Abundance))) %>% 
+   ungroup() %>% 
+   mutate(category = 2) %>% 
+   filter(sampleID != "K12D11") %>% 
+   mutate(Taxonomy = fct_reorder(Taxonomy, rank, .desc = TRUE))
+ 
+  
+ ggplot() +
+  geom_raster(data = biobake_tax_heatmap, aes(x = sampleID, y = Taxonomy, fill = as.numeric(log10(rel_abund_heatmap))))  +
+   theme(
+    strip.text.y = element_blank()) +
+facet_grid( rows = vars(category),
+            cols = vars(Patient), scales = "free", space = "free_y") +
+  
+  theme(axis.text.y.left = element_text(face = "italic"))+
+  scale_x_discrete(labels=xlabels2) +
+  labs(x = "Days Prior to iBV", y = "Taxonomy") +
+   
+   scale_fill_gradient(breaks = c( -5, -3,  -2, -1), 
+                       labels = c(".0001",  ".01", "1", "10" ),
+                       na.value="black",
+                       low = "darkblue", high = "lightblue", 
+                       name = "Bacteria abundance (%)", 
+                       guide = guide_colourbar(direction = "horizontal", 
+                                               #order = 2,
+                                               title.position = "top")
+                       ) +
+   
+   
+   new_scale_fill() +
+   
+   geom_raster(data = Nugent_meta_data, aes(x = sampleID, y = Score, fill = Nuget_Category ))  +
+  
+   scale_fill_manual(values = c(Low = "green", Mid = "yellow",  High = "red"), name = "Nuget Score") +
+   geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+   geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+  #  geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+   guides(fill = "none")
+
+
+ # # guides(fill =
+ #           guide_legend(
+ #             title.theme = element_text(
+ #               size = 10), label.hjust = .05))
 
 ################ Metaphlan To Valencia ############################
 
@@ -282,38 +365,58 @@ taxo_meta_dat <- taxo_data_rotate %>%
 Day_labels <- Day_labels %>% as.data.frame() %>% rownames_to_column(var = "sampleID") %>% rename(Day = ".")
 
 
-######### Creating Dist Matrix########
+######### Creating Dist Matrix######
+  
 
 
+CST_mat <- taxo_data_rotate %>% dplyr::select(-sampleID) 
 
-CST_mat <- taxo_data_rotate %>% dplyr::select(-sampleID)
+CST_mat2 <- CST_mat[-c(1),]
 
-CST_mat <- sapply(CST_mat, as.numeric)
+CST_mat <- sapply(CST_mat2, as.numeric)
 
-CST_mat <- as.matrix(CST_mat)
+CST_mat1 <- as.matrix(CST_mat)
+
+Metaphlan_CST_add_count <- as.data.frame(CST_mat) %>% 
+  mutate(count = rowSums(.)) %>% 
+  rownames_to_column(var="sampleID") %>% 
+  dplyr::select(sampleID, count)
 
 set.seed(1)
-dist <- vegdist(CST_mat, method = "bray")
+dist <- vegdist(CST_mat1, method = "bray")
 nmds <- metaMDS(dist)
+
 
 goodness(nmds)
 stressplot(nmds)
 Metaphlan_nmds <- scores(nmds, display="site") %>%
   as_tibble(rownames = "sampleID") 
-Metaphlan_nmds$sampleID <- taxo_meta_dat$sampleID
+Metaphlan_nmds$sampleID <- rownames(CST_mat2)
 
-metadata_nmds <- inner_join(Metaphlan_nmds, taxo_meta_dat, by= "sampleID")  %>% 
-  inner_join(Day_labels, by = "sampleID")
-
-
+metadata_nmds <- left_join(Metaphlan_nmds, taxo_meta_dat, by= "sampleID")  %>% 
+  left_join(Day_labels, by = "sampleID")
 
 metadata_nmds %>%
   ggplot(aes(x=NMDS1, y=NMDS2, color=Patient, label = Day ))+
-  geom_label_repel()+
-  geom_point( aes(shape =CST, size = score))+
-  scale_shape_manual(values=c(6,16,18,17))+
-  theme_classic()
+  geom_label_repel(key_glyph = "rect")+
+  geom_point( aes(shape =CST, size = 10))+
+  scale_shape_manual(values=c("\u29EB","\u25FC","\u25B2","\u25CF"))+
+  coord_flip() +
+  theme_classic() +
+   scale_color_manual(values = c("#a9d1e3", "#8c33e4", "#00008B", "#000000"))
 
+################### Ordination Alternative 
+tax_dist <- dist %>% as.matrix() %>% as.data.frame()
+rownames(tax_dist) <- rownames(CST_mat2)
+tax_dist1 <- tax_dist %>% mutate(sampleID = rownames(tax_dist)) %>% 
+                          
+            pivot_longer(-sampleID, values_to = "distance", names_to = "names" ) %>% 
+            left_join(Metaphlan_CST, by = "sampleID") %>% 
+            mutate(Patient = str_sub(sampleID, 1,3))
+  
+  
+  
+  
 
 ############### Vis Humann Pathway Analysis ##################
 
@@ -343,8 +446,9 @@ path_shorter <- path_shot_test1 %>%
   dplyr::select(-Pathway) %>%
   arrange(desc(path_relabund_sum)) %>%
   mutate(rank = row_number() ) %>%
-  filter(rank <= 30) %>%
-  dplyr::select (-path_relabund_sum, -rank, -Pathway_symbol)
+  filter(rank <= 50) %>%
+  dplyr::select (-path_relabund_sum, -rank, -Pathway_symbol)# %>% 
+ #dplyr::select(K12D4_S25_L003_R1_001_Abundance, K12D6_S26_L003_R1_001_Abundance, K12D9_S27_L003_R1_001_Abundance, everything() )
 
 path_rotate <-  t(path_shorter) %>%
   as.data.frame() %>%
@@ -355,6 +459,7 @@ path_rotate <-  t(path_shorter) %>%
 
 
 path_rotate$sampleID <- gsub("_.*","", path_rotate$sampleID)
+
 
 rownames(path_rotate) <- path_rotate$sampleID
 
@@ -368,9 +473,10 @@ CST_meta <- metadata_nmds %>% as.data.frame() %>%
   rename(CST = CST)
 
 rownames(CST_meta) <- CST_meta$ID
-CST_meta<- CST_meta %>% dplyr::select(-ID) 
+CST_meta<- CST_meta %>% dplyr::select(-ID) %>% 
+  rownames_to_column(var="sampleID")
 
-path_rotate1 <- t(path_rotate1) 
+path_rotate1 <-t(path_rotate1)
 
 colnames(path_rotate1) <- Day_labels_verbose
 
@@ -378,27 +484,45 @@ colnames(path_rotate1) <- Day_labels_verbose
 
 paletteLength <- 50
 
-mycolor <- viridis::viridis(paletteLength)
+mycolor <- viridis::viridis
 scale_rows = function(x){
   m = apply(x, 1, mean, na.rm = T)
   s = apply(x, 1, sd, na.rm = T)
   return((x - m) / s)
 }
 
+path_rotate1 <- as.matrix(path_rotate1)
 
 zscores <- scale_rows(path_rotate1)
-
-pheatmap(mat = zscores,
-         color = mycolor, 
+ha_c = HeatmapAnnotation(CST = CST_meta$CST,  
+                         col = list(CST = c("I"="#089392", "II" = "#D95F02", "III" = "#82C782", "IV-B" = "#CF597E", "V" = "#EACF87"))) 
+   
+                        
+ht1 = Heatmap(zscores, name = " ",
+              col = viridis(50),
+              top_annotation = ha_c,
+              row_names_gp = gpar(fontsize = 8),
+              column_names_gp = gpar(fontsize = 8),
+              row_names_max_width = unit(10, "cm"),
+              heatmap_legend_param = list(title = " ", legend_height = unit(4, "cm")),
+              column_split = CST_meta$CST
+              ) 
+draw(ht1 )
+pheatmap( mat = zscores, 
+         
          annotation_col = CST_meta, 
-         legend=T, 
-         # legend_labels = c("Z-Score"),
+         color = viridis(50), 
+       
+         #legend=F, 
+          #legend_labels = c("Z-Score", "CST"),
          #cluster_cols = FALSE,
-         gaps_col = c(6,12,18)
+         #gaps_col = c(6,12,18),
+         border_color=NA
          
          
          
 ) 
+draw(lgd, x = unit(1, "npc"), y = unit(1, "npc"), just = c("right", "top"))
 
 ################################# Completed Biobakery Portion of Analysis ##################################
 ################################# starting the VIRGO Section of Analysis ##################################
@@ -463,13 +587,16 @@ ssh_exec_wait(session, command = c( "cd VIRGO/4_run_VIRGO/",
                                     "sbatch ./runMapping.step2.sh -p temp_mapping -d ~/VIRGO"))
 
 
+file_num <- 0
+file_num_tot <- 1
+
 while( file_num[1] != file_num_tot[1]) {
   file_num <- capture.output(ssh_exec_wait(session, command = c(" num=$(wc -l < VIRGO/4_run_VIRGO/kneaddata_output_files.txt)", 
                                      "num_mult=$((($num * 11)+6))",
                                      'echo  "$num_mult"') ) )
   
   file_num_tot <- capture.output(ssh_exec_wait(session, command = "ls -lq VIRGO/4_run_VIRGO/temp_mapping  | wc -l"  ))
-  Sys.sleep(300)
+  Sys.sleep(60)
   }   
 
 
@@ -490,16 +617,19 @@ ssh_disconnect(session)
 ## cleaned some of it to make certain improvements,so the differences are suddle, but 
 ## see if you can notice the improvements I've made. 
 
-VIRGO_taxo <- read.delim(VIRGO_vis_input_total_abun) 
+VIRGO_taxo <- read.delim(VIRGO_vis_input_total_abun) %>% 
+  filter(!grepl("Mock", PC)) %>% 
+
+  filter(!grepl("Tth", PC))
 
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D4"] <-  "K12D04"
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D6"] <-  "K12D06"
 VIRGO_taxo$PC[VIRGO_taxo$PC == "K12D9"] <-  "K12D09"
 VIRGO_taxo <- VIRGO_taxo[c(3,4,5,1,2,6:nrow(VIRGO_taxo)), ]
 
-VIRGO_taxo$PC <- gsub("\\_.*", "", VIRGO_taxo$PC)
+#VIRGO_taxo$PC <- gsub("\\_.*", "", VIRGO_taxo$PC)
 
-VIRGO_taxo1 <- VIRGO_taxo
+VIRGO_taxo1 <- VIRGO_taxo 
 
 VIRGO_taxo1$Sample <- VIRGO_taxo1$PC
 VIRGO_taxo1$Patient <- str_sub(VIRGO_taxo1$Sample, 1, 3)
@@ -516,36 +646,35 @@ VIRGO_Combo <- VIRGO_taxo_longer %>%
   inner_join(VIRGO_taxo_longer) %>%
   mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy ))# %>%
 
+VIRGO_Combo_vis <- dplyr::select(VIRGO_Combo, Sample, Abundance, Taxonomy, Patient)
 
-VIRGO_xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D11" = "-4", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
+VIRGO_xlabels2=c("K12D04" = "-11", "K12D06" = "-9", "K12D09" = "-6", "K12D13" = "-2", "K12D15" = "0", "K18D47" = "-10", "K18D49" = "-8", "K18D51" = "-6", "K18D53" = "-4", "K18D55" = "-2", "K18D57" = "0", "K19D23" = "-10", "K19D25" = "-8", "K19D27" = "-6", "K19D29" = "-4", "K19D31" = "-2", "K19D33" = "0", "K20D75" = "-10", "K20D77" = "-8", "K20D79" = "-6", "K20D81" = "-4", "K20D83" = "-2", "K20D85" = "0")
 
+stack_barplot(VIRGO_Combo_vis, VIRGO_Combo_vis$Sample, VIRGO_Combo_vis$Abundance, VIRGO_Combo_vis$Taxonomy, ~Patient, VIRGO_xlabels2, "Abundance")
 
-ggplot(VIRGO_Combo, aes(x =Sample, y =Abundance, fill=Taxonomy,  color=I("black")  )) +
-  geom_col() +
-  theme_classic() + facet_grid(~Patient, scales = "free") +
-  scale_y_continuous(expand = c(0,0))+
-  theme(legend.text = element_text(face = "italic"))+
-  labs(x = "Days Prior to iBV", y = "Relative Abundance") +
-  scale_x_discrete(labels=VIRGO_xlabels2)
 
 ###################################################### VIRGO Bar Plot Rel Abund ##########
 
 
-VIRGO_taxo_rel <- read.delim(VIRGO_vis_input_Rel_abund)
+VIRGO_taxo_rel <- read.delim(VIRGO_vis_input_Rel_abund) %>% 
+  filter(!grepl("Mock", PC)) %>% 
+filter(!grepl("Tth", PC))
+
 
 VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC == "K12D4"] <-  "K12D04"
 VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC == "K12D6"] <-  "K12D06"
 VIRGO_taxo_rel$PC[VIRGO_taxo_rel$PC== "K12D9"] <-  "K12D09"
-VIRGO_taxo_rel <- VIRGO_taxo_rel[c(3,4,5,1,2,6:nrow(VIRGO_taxo_rel)), ]
+VIRGO_taxo_rel <- VIRGO_taxo_rel[c(4,5,6,1,2,3,7:nrow(VIRGO_taxo_rel)), ]
 
 
 VIRGO_taxo_rel$Sample <- VIRGO_taxo_rel$PC
 VIRGO_taxo_rel$Patient <- str_sub(VIRGO_taxo_rel$Sample, 1, 3)
 
-VIRGO_taxo_rel$Sample <- gsub("\\_.*", "", VIRGO_taxo_rel$Sample)
+#VIRGO_taxo_rel$Sample <- gsub("\\_.*", "", VIRGO_taxo_rel$Sample)
 names <- str(VIRGO_taxo_rel[1,])
 VIRGO_taxo_longer_rel <- VIRGO_taxo_rel %>%
-  pivot_longer(-c(PC,Sample,Patient), names_to = "Taxonomy", values_to = "Relative_Abundance") 
+  pivot_longer(-c(PC,Sample,Patient), names_to = "Taxonomy", values_to = "Relative_Abundance") %>% 
+  mutate(Taxonomy = replace(Taxonomy, Taxonomy == "Atopobium_vaginae", "Fannyhessea_vaginae" ))
 
 VIRGO_Combo_rel <- VIRGO_taxo_longer_rel %>% 
   group_by(Taxonomy) %>%
@@ -553,18 +682,57 @@ VIRGO_Combo_rel <- VIRGO_taxo_longer_rel %>%
   arrange(desc(tax_abun_rel)) %>% 
   mutate(rank = row_number()) %>% 
   inner_join(VIRGO_taxo_longer_rel) %>%
-  mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy ))# %>%
+  mutate(Taxonomy = if_else(rank > 12, "Other", Taxonomy )) %>%
+  mutate(Taxonomy = if_else(Taxonomy == "Coprobacillus_sp.", "Other", Taxonomy)) %>% 
+  mutate(Taxonomy = fct_reorder(Taxonomy, rank, .desc = TRUE)) %>% 
+    mutate( category = "2")
+
+VIRGO_Combo_rel_heat <- VIRGO_Combo_rel %>% group_by(Taxonomy, Sample) %>% mutate(rel_abund_heatmap = sum(Relative_Abundance))
+
+stack_barplot(VIRGO_Combo_rel, VIRGO_Combo_rel$Sample, VIRGO_Combo_rel$Relative_Abundance, VIRGO_Combo_rel$Taxonomy, ~Patient, VIRGO_xlabels2, "Relative Abundance")
+
+
+Tax_heatmap(VIRGO_Combo_rel,VIRGO_Combo_rel$Sample ,VIRGO_Combo_rel$Taxonomy, VIRGO_Combo_rel$Relative_Abundance,~Patient, VIRGO_xlabels2  )
+
+
+
+################################ CUSTOM NUGET HEATMAP ###########################
+
+Nugent_meta_data <- Nugent_meta_data %>% mutate(Patient = str_sub(sampleID, 1,3)) %>% 
+  filter(sampleID != "K12D11")
+
+biobake_tax_heatmap <- taxo_data_rotate2_adjusted %>% group_by(Taxonomy, sampleID) %>% 
+  mutate(rel_abund_heatmap = sum(as.numeric(Relative_Abundance))) %>% 
+  mutate(Taxonomy = fct_reorder(Taxonomy, rank, .desc = TRUE)) %>%
+  mutate(category = 2) %>% 
+  filter(sampleID != "K12D11")
+
+ggplot() +
+  geom_raster(data = biobake_tax_heatmap, aes(x = sampleID, y = factor(Taxonomy), fill = log10(as.numeric(rel_abund_heatmap)+0)))  +
+  scale_fill_gradient(low = "darkblue", high = "lightblue", name = "Relative Abundance")+
+  theme(
+    strip.text.y = element_blank()) +
+  
+  facet_grid( rows = vars(category),
+              cols = vars(Patient), scales = "free", space = "free_y") +
+  
+  theme(axis.text.y.left = element_text(face = "italic"))+
+  scale_x_discrete(labels=xlabels2) +
+  labs(x = "Days Prior to iBV", y = "Taxonomy") +
+  
+  new_scale_fill() +
+  
+  geom_raster(data = Nugent_meta_data, aes(x = sampleID, y = Score, fill = Nuget_Category ))  +
+  
+  scale_fill_manual(values = c(Low = "green", Mid = "yellow",  High = "red"), name = "Nuget Score") +
+  geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+  geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+  #  geom_text(data = Nugent_meta_data, aes(x = sampleID, y = Score, label = Nuget_Score), size = 4)+
+  guides(fill = "none")
 
 
 
 
-ggplot(VIRGO_Combo_rel, aes(x =Sample, y =Relative_Abundance, fill=Taxonomy,  color=I("black")  )) +
-  geom_col() +
-  theme_classic() + facet_grid(~Patient, scales = "free") +
-  scale_y_continuous(expand = c(0,0))+
-  labs(x = "Days Prior to iBV", y = "Relative Abundance") +
-  theme(legend.text = element_text(face = "italic"))+
-  scale_x_discrete(labels=VIRGO_xlabels2)
 
 ################################## TIME FOR VIRGO TO valencia ################################
 
@@ -583,10 +751,7 @@ scp_upload(session, VIRGO_to_valencia_file, to ="VALENCIA" )
 ssh_exec_wait(session, command = c( 
   'cd VALENCIA',
   paste('conda activate',  Cluster_conda_env),
-  paste('srun python3 ./Valencia.py -ref CST_centroids_012920.csv -i', VIRGO_to_valencia_file, '-o', Valencia_analysis_of_VIRGO_tax)
-  
-)
-)
+  paste('srun python3 ./Valencia.py -ref CST_centroids_012920.csv -i', VIRGO_to_valencia_file, '-o', Valencia_analysis_of_VIRGO_tax)))
 
 
 
@@ -610,7 +775,9 @@ VIRGO_taxo <- VIRGO_taxo %>% rename( sampleID = PC)
 
 VIRGO_CST_meta <- VIRGO_taxo %>% 
   inner_join(VIRGO_CST, by = "sampleID") %>% 
-  mutate(Patient = str_sub(sampleID, 1,3))
+  mutate(Patient = str_sub(sampleID, 1,3)) 
+
+
 
 rownames(VIRGO_taxo) <- VIRGO_taxo$sampleID
 
@@ -621,16 +788,22 @@ VIRGO_xlabels2 <- xlabels2 %>% as.data.frame() %>% rownames_to_column(var = "sam
 VIRGO_xlabels3 <- xlabels3 %>% as.data.frame() %>% rownames_to_column(var = "sampleID") %>% rename(Day = ".")
 
 
-##############make dist matrix
+##############make dist matrix #######################
+
 
 VIRGO_CST_mat <- VIRGO_taxo %>% dplyr::select(-sampleID)
 
-VIRGO_CST_mat <- sapply(VIRGO_CST_mat, as.numeric)
+VIRGO_CST_mat1 <- sapply(VIRGO_CST_mat, as.numeric)
 
-VIRGO_CST_mat <- as.matrix(VIRGO_CST_mat)
+VIRGO_CST_mat1 <- as.matrix(VIRGO_CST_mat1)
+
+VIRGO_CST_with_Count <- as.data.frame(VIRGO_CST_mat) %>% 
+  mutate(count = rowSums(.)) %>% 
+  rownames_to_column(var = "sampleID")
+
 
 set.seed(1)
-VIRGO_dist <- avgdist(VIRGO_CST_mat, dmethod = "bray", sample=2000, iterations = 200)
+VIRGO_dist <- avgdist(VIRGO_CST_mat1, dmethod = "bray", sample=2000, iterations = 200)
 VIRGO_nmds <- metaMDS(VIRGO_dist)
 
 goodness(VIRGO_nmds)
@@ -643,20 +816,24 @@ VIRGO_nmds_df$sampleID <- VIRGO_CST_meta$sampleID
 
 
 VIRGO_metadata_nmds <- inner_join(VIRGO_nmds_df, VIRGO_CST_meta, by= "sampleID") %>%
-  left_join(VIRGO_xlabels2, by = "sampleID") 
-
-
-
+  left_join(VIRGO_xlabels2, by = "sampleID") %>% 
+  left_join(VIRGO_CST_with_Count)
 
 
 
 VIRGO_metadata_nmds %>%
   ggplot(aes(x=NMDS1, y=NMDS2, color=Patient, label = Day ))+
-  geom_label_repel()+
+  geom_label_repel(key_glyph = "rect")+
   geom_point( aes(shape =CST, size = score))+
   scale_shape_manual(values=c(6,16,18,17))+
+ scale_color_brewer(palette = "Dark2") +
+  theme_classic() +
+  guides(shape = guide_legend(order = 1),
+         color  = guide_legend(order = 2),
+          size = guide_legend(order = 0)) 
+  #scale_color_jcolors(palette = "pal9")
   
-  theme_classic()
+  
 
 ####################################################LETS GO HEATMAP###############################
 ############################################################################################
@@ -781,7 +958,6 @@ VIRGO_sub <-  VIRGO_gene_info %>%
   mutate(rank = row_number()) %>%
   ungroup() %>% 
   inner_join(VIRGO_gene_info, by = c("sampleID" = "sampleID", "Gene" = "Gene")) %>%
-  #filter(rank <= 30) %>% 
   dplyr::select(Gene, count, rank, sampleID, KEGG_module_number.x,Annotation.x, GO, rel_total_path_count, count, KEGG_pathwayID, Annotation.y, relabund, Patient) %>% 
   group_by(sampleID, KEGG_module_number.x) %>% 
   mutate(sample_path_count= sum(count)) %>% 
@@ -795,21 +971,15 @@ VIRGO_sub$GO <- str_split_fixed(VIRGO_sub$GO, ";", 2)[, 1]
 VIRGO_sub$Subject <-  str_sub(VIRGO_sub$sampleID, 1, 3) 
 
 
-#group_by(sampleID) %>%
-#summarize(mean_rel_abund = 100*mean(relabund), .groups='drop' ) %>%
-#ungroup() %>%
-
-
-
 VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D4"] <-  "K12D04"
 VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D6"] <-  "K12D06"
 VIRGO_sub$sampleID[VIRGO_sub$sampleID == "K12D9"] <-  "K12D09"
 
 
-##For the Most part the Master Doc is cleaned Now we will subset for pathway annotation
+##For the Most part the Large Pathway Doc is cleaned Now we will subset for pathway annotation
 
 
-#   
+#   In future updates will need to add Nuget Score annotation
 
 test <- VIRGO_sub %>%  dplyr::select( sampleID, rel_sample_path_count, Annotation.x)  %>%  distinct() %>% 
   group_by(Annotation.x) %>% 
